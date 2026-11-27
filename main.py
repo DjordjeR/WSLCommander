@@ -1,11 +1,14 @@
-import sys
 import os
+import sys
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication
-from qfluentwidgets import setTheme, Theme
+from qfluentwidgets import Theme, setTheme
 
 from app.main_window import MainWindow
+from app.utils.single_instance import SingleInstanceGuard
+from app.utils.startup import TRAY_FLAG
 from app.utils.wslc_locator import ensure_wslc_on_process_path
 
 
@@ -20,6 +23,7 @@ def main():
     if sys.platform == "win32":
         try:
             import ctypes
+
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
                 "hpconcept.WSLCommander"
             )
@@ -34,27 +38,41 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("WSL Commander")
     app.setApplicationDisplayName("WSL Commander")
+    app.setQuitOnLastWindowClosed(False)  # tray-resident app
 
     # Set application icon – prefer .ico (multi-resolution) over .png
     icon_path = os.path.join(os.path.dirname(__file__), "assets", "icon", "icon.ico")
     if not os.path.exists(icon_path):
-        icon_path = os.path.join(os.path.dirname(__file__), "assets", "icon", "icon.png")
+        icon_path = os.path.join(
+            os.path.dirname(__file__), "assets", "icon", "icon.png"
+        )
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 
     setTheme(Theme.AUTO)
 
-    window = MainWindow()
+    # Single instance: a second launch (e.g. logon start + manual start)
+    # raises the running window instead of double-spawning auto-attach.
+    guard = SingleInstanceGuard()
+    if not guard.try_acquire():
+        guard.notify_running_instance()
+        return
+
+    start_hidden = TRAY_FLAG in sys.argv[1:]
+
+    window = MainWindow(start_hidden=start_hidden)
+    guard.activateRequested.connect(window.show_and_raise)
+    guard.start_listening()
 
     # Also set the window icon directly
     if os.path.exists(icon_path):
         window.setWindowIcon(QIcon(icon_path))
 
-    window.show()
+    if not start_hidden:
+        window.show()
 
     sys.exit(app.exec())
 
 
 if __name__ == "__main__":
     main()
-

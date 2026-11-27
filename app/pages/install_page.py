@@ -3,18 +3,36 @@ import os
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFileDialog,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QVBoxLayout,
+    QWidget,
 )
 from qfluentwidgets import (
-    ScrollArea, TitleLabel, SubtitleLabel, BodyLabel, CaptionLabel,
-    PrimaryPushButton, ToolButton, SearchLineEdit, LineEdit,
-    InfoBar, InfoBarPosition, IndeterminateProgressBar,
-    CardWidget, FluentIcon, SimpleCardWidget, SegmentedWidget,
+    BodyLabel,
+    CaptionLabel,
+    CardWidget,
+    FluentIcon,
+    IndeterminateProgressBar,
+    InfoBar,
+    InfoBarPosition,
+    LineEdit,
+    PrimaryPushButton,
+    ScrollArea,
+    SearchLineEdit,
+    SegmentedWidget,
+    SimpleCardWidget,
+    SubtitleLabel,
+    TitleLabel,
+    ToolButton,
 )
 
 from app.utils.logo_resolver import resolve_logo_path
 from app.workers.wsl_worker import (
-    ListAvailableWorker, LaunchInstallTerminalWorker, ImportDistroWorker,
+    ImportDistroWorker,
+    LaunchInstallTerminalWorker,
+    ListAvailableWorker,
 )
 
 
@@ -79,7 +97,9 @@ class AvailableDistroListItem(CardWidget):
         self._selected = selected
         self._install_btn.setVisible(selected)
         if selected:
-            self.setStyleSheet("CardWidget { border: 2px solid #0078D4; border-radius: 8px; }")
+            self.setStyleSheet(
+                "CardWidget { border: 2px solid #0078D4; border-radius: 8px; }"
+            )
         else:
             self.setStyleSheet("")
 
@@ -94,6 +114,7 @@ class InstallPage(ScrollArea):
     distro_installed = pyqtSignal()
     # Emitted when a catalogue installer terminal has been launched (install is async)
     install_launched = pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("InstallPage")
@@ -207,7 +228,6 @@ class InstallPage(ScrollArea):
         self._list_layout.setSpacing(8)
         self._list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         layout.addWidget(self._list_widget)
-
 
         return panel
 
@@ -331,9 +351,13 @@ class InstallPage(ScrollArea):
     def _filter(self, text: str):
         lower = text.lower()
         filtered = (
-            [d for d in self._all_distros
-             if lower in d["name"].lower() or lower in d["friendly_name"].lower()]
-            if text else self._all_distros
+            [
+                d
+                for d in self._all_distros
+                if lower in d["name"].lower() or lower in d["friendly_name"].lower()
+            ]
+            if text
+            else self._all_distros
         )
         self._populate_list(filtered)
 
@@ -358,16 +382,24 @@ class InstallPage(ScrollArea):
             self._selected_card.set_install_enabled(True)
         if success:
             InfoBar.success(
-                title="Installer Launched", content=msg,
-                orient=Qt.Orientation.Horizontal, isClosable=True,
-                position=InfoBarPosition.TOP, duration=5000, parent=self,
+                title="Installer Launched",
+                content=msg,
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=5000,
+                parent=self,
             )
             self.install_launched.emit()
         else:
             InfoBar.error(
-                title="Failed to Launch Installer", content=msg,
-                orient=Qt.Orientation.Horizontal, isClosable=True,
-                position=InfoBarPosition.TOP, duration=8000, parent=self,
+                title="Failed to Launch Installer",
+                content=msg,
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=8000,
+                parent=self,
             )
 
     # ------------------------------------------------------------------
@@ -376,7 +408,8 @@ class InstallPage(ScrollArea):
 
     def _browse_install_dir(self):
         folder = QFileDialog.getExistingDirectory(
-            self, "Select Install Location",
+            self,
+            "Select Install Location",
             os.path.expanduser("~"),
         )
         if folder:
@@ -384,7 +417,8 @@ class InstallPage(ScrollArea):
 
     def _browse_tar(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select TAR Archive",
+            self,
+            "Select TAR Archive",
             os.path.expanduser("~"),
             "TAR Archive (*.tar);;All Files (*)",
         )
@@ -422,16 +456,24 @@ class InstallPage(ScrollArea):
             self._import_dir_edit.clear()
             self._import_tar_edit.clear()
             InfoBar.success(
-                title="Import Successful", content=msg,
-                orient=Qt.Orientation.Horizontal, isClosable=True,
-                position=InfoBarPosition.TOP, duration=5000, parent=self,
+                title="Import Successful",
+                content=msg,
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=5000,
+                parent=self,
             )
             self.distro_installed.emit()
         else:
             InfoBar.error(
-                title="Import Failed", content=msg,
-                orient=Qt.Orientation.Horizontal, isClosable=True,
-                position=InfoBarPosition.TOP, duration=8000, parent=self,
+                title="Import Failed",
+                content=msg,
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=8000,
+                parent=self,
             )
 
     # ------------------------------------------------------------------
@@ -440,8 +482,11 @@ class InstallPage(ScrollArea):
 
     def _on_error(self, msg: str):
         InfoBar.warning(
-            title="Could not fetch distributions", content=msg,
-            orient=Qt.Orientation.Horizontal, isClosable=True,
-            position=InfoBarPosition.TOP, duration=6000, parent=self,
+            title="Could not fetch distributions",
+            content=msg,
+            orient=Qt.Orientation.Horizontal,
+            isClosable=True,
+            position=InfoBarPosition.TOP,
+            duration=6000,
+            parent=self,
         )
-

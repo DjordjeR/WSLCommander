@@ -23,6 +23,7 @@ a = Analysis(
         *collect_submodules('qfluentwidgets'),
         'PyQt6.QtSvg',
         'PyQt6.QtSvgWidgets',
+        'PyQt6.QtNetwork',
     ],
     hookspath=[],
     hooksconfig={},

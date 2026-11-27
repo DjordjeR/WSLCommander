@@ -1,16 +1,17 @@
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List
 
 
 class EntityType(Enum):
     """Distinguishes the kind of entity rendered on the Distributions page."""
+
     DISTRO = "distro"
     CONTAINER = "container"
 
 
 class EntityFilter(Enum):
     """Filter states for the unified Distributions page."""
+
     ALL = "all"
     DISTROS_ONLY = "distros"
     CONTAINERS_ONLY = "containers"
@@ -19,13 +20,18 @@ class EntityFilter(Enum):
 @dataclass
 class PortMapping:
     """A published container port mapping (host <-> container)."""
+
     host_ip: str = ""
     host_port: str = ""
     container_port: str = ""
     protocol: str = "tcp"
 
     def display(self) -> str:
-        host = f"{self.host_ip}:" if self.host_ip and self.host_ip not in ("0.0.0.0", "::") else ""
+        host = (
+            f"{self.host_ip}:"
+            if self.host_ip and self.host_ip not in ("0.0.0.0", "::")
+            else ""
+        )
         if self.host_port:
             return f"{host}{self.host_port}->{self.container_port}/{self.protocol}"
         return f"{self.container_port}/{self.protocol}"
@@ -34,6 +40,7 @@ class PortMapping:
 @dataclass
 class VolumeMapping:
     """A container volume / bind mount."""
+
     source: str = ""
     destination: str = ""
     mode: str = ""
@@ -46,16 +53,17 @@ class VolumeMapping:
 @dataclass
 class Container:
     """A WSL container as reported by `wslc list` / `wslc inspect`."""
+
     id: str
     name: str
     image: str = ""
-    state: str = ""             # "running", "exited", "created", "paused"
-    status: str = ""           # human-readable, e.g. "Up 2 minutes"
+    state: str = ""  # "running", "exited", "created", "paused"
+    status: str = ""  # human-readable, e.g. "Up 2 minutes"
     command: str = ""
     created: str = ""
-    ports: List[PortMapping] = field(default_factory=list)
-    volumes: List[VolumeMapping] = field(default_factory=list)
-    env: List[str] = field(default_factory=list)
+    ports: list[PortMapping] = field(default_factory=list)
+    volumes: list[VolumeMapping] = field(default_factory=list)
+    env: list[str] = field(default_factory=list)
     network: str = ""
     restart_policy: str = ""
     logo_path: str = ""
@@ -98,10 +106,7 @@ class Container:
         """
         cid = str(cls._first(data, "Id", "ID", "id", "ContainerId"))
         names = cls._first(data, "Names", "Name", "names", "name", default="")
-        if isinstance(names, list):
-            name = names[0] if names else ""
-        else:
-            name = str(names)
+        name = (names[0] if names else "") if isinstance(names, list) else str(names)
         name = name.lstrip("/").strip()
 
         image = str(cls._first(data, "Image", "image", "ImageName"))
@@ -112,7 +117,9 @@ class Container:
         # the card shows e.g. "Running" instead of a raw enum value.
         status = str(raw_status) if raw_status else state.capitalize()
         command = str(cls._first(data, "Command", "command", default=""))
-        created = _format_created(cls._first(data, "CreatedAt", "Created", "created", default=""))
+        created = _format_created(
+            cls._first(data, "CreatedAt", "Created", "created", default="")
+        )
 
         ports = cls._parse_ports(cls._first(data, "Ports", "ports", default=[]))
 
@@ -128,24 +135,38 @@ class Container:
         )
 
     @staticmethod
-    def _parse_ports(raw) -> List[PortMapping]:
-        result: List[PortMapping] = []
+    def _parse_ports(raw) -> list[PortMapping]:
+        result: list[PortMapping] = []
         if not raw:
             return result
         # Structured list of dicts.
         if isinstance(raw, list):
             for item in raw:
                 if isinstance(item, dict):
-                    host_ip = item.get("BindingAddress",
-                                       item.get("HostIp", item.get("host_ip", "")))
-                    proto = item.get("Protocol",
-                                     item.get("Type", item.get("protocol", "tcp")))
-                    result.append(PortMapping(
-                        host_ip=str(host_ip or ""),
-                        host_port=str(item.get("HostPort", item.get("host_port", "")) or ""),
-                        container_port=str(item.get("ContainerPort", item.get("container_port", item.get("PrivatePort", ""))) or ""),
-                        protocol=_normalize_protocol(proto),
-                    ))
+                    host_ip = item.get(
+                        "BindingAddress", item.get("HostIp", item.get("host_ip", ""))
+                    )
+                    proto = item.get(
+                        "Protocol", item.get("Type", item.get("protocol", "tcp"))
+                    )
+                    result.append(
+                        PortMapping(
+                            host_ip=str(host_ip or ""),
+                            host_port=str(
+                                item.get("HostPort", item.get("host_port", "")) or ""
+                            ),
+                            container_port=str(
+                                item.get(
+                                    "ContainerPort",
+                                    item.get(
+                                        "container_port", item.get("PrivatePort", "")
+                                    ),
+                                )
+                                or ""
+                            ),
+                            protocol=_normalize_protocol(proto),
+                        )
+                    )
                 elif isinstance(item, str):
                     result.extend(Container._parse_port_string(item))
             return result
@@ -156,7 +177,7 @@ class Container:
         return result
 
     @staticmethod
-    def _parse_port_string(text: str) -> List[PortMapping]:
+    def _parse_port_string(text: str) -> list[PortMapping]:
         text = text.strip()
         if not text:
             return []
@@ -175,12 +196,14 @@ class Container:
             container_port, proto = container_part.split("/", 1)
         else:
             container_port = container_part
-        return [PortMapping(
-            host_ip=host_ip.strip(),
-            host_port=host_port.strip(),
-            container_port=container_port.strip(),
-            protocol=proto.strip() or "tcp",
-        )]
+        return [
+            PortMapping(
+                host_ip=host_ip.strip(),
+                host_port=host_port.strip(),
+                container_port=container_port.strip(),
+                protocol=proto.strip() or "tcp",
+            )
+        ]
 
 
 def _normalize_protocol(proto) -> str:
@@ -234,13 +257,14 @@ def _format_created(value) -> str:
         return ""
     # Epoch seconds (int, or numeric string).
     epoch = None
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        epoch = int(value)
-    elif isinstance(value, str) and value.isdigit():
+    if (isinstance(value, (int, float)) and not isinstance(value, bool)) or (
+        isinstance(value, str) and value.isdigit()
+    ):
         epoch = int(value)
     if epoch is not None:
         try:
             from datetime import datetime
+
             return datetime.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M:%S")
         except (ValueError, OverflowError, OSError):
             return str(value)

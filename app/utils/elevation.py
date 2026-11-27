@@ -3,7 +3,6 @@ import ctypes.wintypes
 import shutil
 import subprocess
 
-
 # ── Win32 constants ──────────────────────────────────────────────────────────
 
 _SEE_MASK_NOCLOSEPROCESS = 0x00000040
@@ -95,6 +94,7 @@ def run_or_elevate(args: list[str], timeout: int = 20) -> tuple[int, str, str]:
                 args,
                 capture_output=True,
                 timeout=timeout,
+                check=False,  # return code is inspected by callers
                 creationflags=subprocess.CREATE_NO_WINDOW,
             )
             for enc in ("utf-8", "cp1252"):

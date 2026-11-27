@@ -2,19 +2,21 @@ import os
 import re
 
 # Base directory for distro logos - resolve from project root
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 _ASSETS_DIR = os.path.join(_PROJECT_ROOT, "assets", "distros")
 
 _KEYWORD_MAP = [
-    ("ubuntu",   "ubuntu.png"),
-    ("debian",   "debian.png"),
-    ("kali",     "kali.png"),
-    ("arch",     "arch.png"),
-    ("fedora",   "fedora.png"),
-    ("oracle",   "oracle.png"),
+    ("ubuntu", "ubuntu.png"),
+    ("debian", "debian.png"),
+    ("kali", "kali.png"),
+    ("arch", "arch.png"),
+    ("fedora", "fedora.png"),
+    ("oracle", "oracle.png"),
     ("opensuse", "opensuse.png"),
-    ("suse",     "opensuse.png"),
-    ("alma",     "alma.png"),
+    ("suse", "opensuse.png"),
+    ("alma", "alma.png"),
 ]
 
 _FALLBACK = "linux.png"
@@ -37,4 +39,3 @@ def resolve_container_logo(image: str = "") -> str:
     base image name and return a distro-specific icon.
     """
     return os.path.join(_ASSETS_DIR, _CONTAINER_LOGO)
-

@@ -1,6 +1,5 @@
 import re
 import subprocess
-from typing import List
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -15,6 +14,7 @@ def _run(args: list[str], timeout: int = 30) -> tuple[int, str, str]:
             args,
             capture_output=True,
             timeout=timeout,
+            check=False,  # return code is inspected by callers
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
         # WSL outputs UTF-16 LE on some systems; try multiple decodings
@@ -25,7 +25,11 @@ def _run(args: list[str], timeout: int = 30) -> tuple[int, str, str]:
                 return result.returncode, stdout, stderr
             except (UnicodeDecodeError, ValueError):
                 continue
-        return result.returncode, result.stdout.decode("utf-8", errors="replace").strip(), ""
+        return (
+            result.returncode,
+            result.stdout.decode("utf-8", errors="replace").strip(),
+            "",
+        )
     except FileNotFoundError:
         return -1, "", "wsl.exe not found"
     except subprocess.TimeoutExpired:
@@ -34,7 +38,8 @@ def _run(args: list[str], timeout: int = 30) -> tuple[int, str, str]:
 
 class ListInstalledWorker(QThread):
     """Lists all installed WSL distributions via `wsl --list --verbose`."""
-    result = pyqtSignal(list)   # list[Distro]
+
+    result = pyqtSignal(list)  # list[Distro]
     error = pyqtSignal(str)
 
     def run(self):
@@ -50,16 +55,15 @@ class ListInstalledWorker(QThread):
             self.result.emit([])
             return
 
-        distros: List[Distro] = []
+        distros: list[Distro] = []
         lines = stdout.splitlines()
-        for line in lines[1:]:  # skip header
+        for raw_line in lines[1:]:  # skip header
             # Remove BOM / non-printable chars
-            line = re.sub(r"[^\x20-\x7E*]", "", line).strip()
+            line = re.sub(r"[^\x20-\x7E*]", "", raw_line).strip()
             if not line:
                 continue
             is_default = line.startswith("*")
-            line = line.lstrip("* ").strip()
-            parts = line.split()
+            parts = line.lstrip("* ").strip().split()
             if len(parts) < 3:
                 continue
             name, state, version = parts[0], parts[1], parts[2]
@@ -67,26 +71,29 @@ class ListInstalledWorker(QThread):
             # distro entries (state must be one of the known WSL states).
             if state.lower() not in ("running", "stopped"):
                 continue
-            distros.append(Distro(
-                name=name,
-                state=state,
-                version=version,
-                is_default=is_default,
-                logo_path=resolve_logo_path(name),
-            ))
+            distros.append(
+                Distro(
+                    name=name,
+                    state=state,
+                    version=version,
+                    is_default=is_default,
+                    logo_path=resolve_logo_path(name),
+                )
+            )
         self.result.emit(distros)
 
 
 class SetDefaultWorker(QThread):
     """Sets a WSL distribution as default."""
-    done = pyqtSignal(bool, str)   # success, message
+
+    done = pyqtSignal(bool, str)  # success, message
 
     def __init__(self, name: str, parent=None):
         super().__init__(parent)
         self.name = name
 
     def run(self):
-        rc, stdout, stderr = _run(["wsl.exe", "--set-default", self.name])
+        rc, _stdout, stderr = _run(["wsl.exe", "--set-default", self.name])
         if rc == 0:
             self.done.emit(True, f"'{self.name}' is now the default distribution.")
         else:
@@ -95,7 +102,8 @@ class SetDefaultWorker(QThread):
 
 class ListAvailableWorker(QThread):
     """Lists distributions available to install via `wsl --list --online`."""
-    result = pyqtSignal(list)   # list[dict]  {'name': str, 'friendly_name': str}
+
+    result = pyqtSignal(list)  # list[dict]  {'name': str, 'friendly_name': str}
     error = pyqtSignal(str)
 
     def run(self):
@@ -135,6 +143,7 @@ class ListAvailableWorker(QThread):
 
 class InstallDistroWorker(QThread):
     """Installs a WSL distribution via `wsl --install -d <name>`."""
+
     progress = pyqtSignal(str)
     done = pyqtSignal(bool, str)
 
@@ -164,7 +173,10 @@ class InstallDistroWorker(QThread):
             if proc.returncode == 0:
                 self.done.emit(True, f"'{self.name}' installed successfully.")
             else:
-                self.done.emit(False, f"Installation of '{self.name}' failed (exit {proc.returncode}).")
+                self.done.emit(
+                    False,
+                    f"Installation of '{self.name}' failed (exit {proc.returncode}).",
+                )
         except FileNotFoundError:
             self.done.emit(False, "wsl.exe not found.")
         except Exception as e:
@@ -173,6 +185,7 @@ class InstallDistroWorker(QThread):
 
 class TerminateDistroWorker(QThread):
     """Terminates a running WSL distribution."""
+
     done = pyqtSignal(bool, str)
 
     def __init__(self, name: str, parent=None):
@@ -180,7 +193,7 @@ class TerminateDistroWorker(QThread):
         self.name = name
 
     def run(self):
-        rc, stdout, stderr = _run(["wsl.exe", "--terminate", self.name])
+        rc, _stdout, stderr = _run(["wsl.exe", "--terminate", self.name])
         if rc == 0:
             self.done.emit(True, f"'{self.name}' terminated.")
         else:
@@ -189,6 +202,7 @@ class TerminateDistroWorker(QThread):
 
 class UnregisterDistroWorker(QThread):
     """Unregisters (removes) a WSL distribution."""
+
     done = pyqtSignal(bool, str)
 
     def __init__(self, name: str, parent=None):
@@ -196,7 +210,7 @@ class UnregisterDistroWorker(QThread):
         self.name = name
 
     def run(self):
-        rc, stdout, stderr = _run(["wsl.exe", "--unregister", self.name])
+        rc, _stdout, stderr = _run(["wsl.exe", "--unregister", self.name])
         if rc == 0:
             self.done.emit(True, f"'{self.name}' unregistered.")
         else:
@@ -205,6 +219,7 @@ class UnregisterDistroWorker(QThread):
 
 class LaunchDistroTerminalWorker(QThread):
     """Launches a terminal for a WSL distribution."""
+
     done = pyqtSignal(bool, str)
 
     def __init__(self, name: str, parent=None):
@@ -215,7 +230,15 @@ class LaunchDistroTerminalWorker(QThread):
         try:
             # Launch a WSL terminal for the distribution, starting in the home directory
             subprocess.Popen(
-                ["wsl.exe", "-d", self.name, "--", "bash", "-c", "cd ~ && exec bash -l"],
+                [
+                    "wsl.exe",
+                    "-d",
+                    self.name,
+                    "--",
+                    "bash",
+                    "-c",
+                    "cd ~ && exec bash -l",
+                ],
                 creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
             self.done.emit(True, f"Opened terminal for '{self.name}'.")
@@ -227,6 +250,7 @@ class LaunchDistroTerminalWorker(QThread):
 
 class LaunchInstallTerminalWorker(QThread):
     """Launches a terminal with the WSL install command."""
+
     done = pyqtSignal(bool, str)
 
     def __init__(self, name: str, parent=None):
@@ -241,7 +265,9 @@ class LaunchInstallTerminalWorker(QThread):
                 ["powershell.exe", "-Command", cmd],
                 creationflags=subprocess.CREATE_NEW_CONSOLE,
             )
-            self.done.emit(True, f"Launched installer for '{self.name}' in a new terminal.")
+            self.done.emit(
+                True, f"Launched installer for '{self.name}' in a new terminal."
+            )
         except FileNotFoundError:
             self.done.emit(False, "PowerShell not found.")
         except Exception as e:
@@ -250,6 +276,7 @@ class LaunchInstallTerminalWorker(QThread):
 
 class ExportDistroWorker(QThread):
     """Exports a WSL distribution to a .tar file via `wsl --export`."""
+
     done = pyqtSignal(bool, str)
 
     def __init__(self, name: str, export_path: str, parent=None):
@@ -258,18 +285,21 @@ class ExportDistroWorker(QThread):
         self.export_path = export_path
 
     def run(self):
-        rc, stdout, stderr = _run(
+        rc, _stdout, stderr = _run(
             ["wsl.exe", "--export", self.name, self.export_path],
             timeout=600,
         )
         if rc == 0:
-            self.done.emit(True, f"'{self.name}' exported successfully to:\n{self.export_path}")
+            self.done.emit(
+                True, f"'{self.name}' exported successfully to:\n{self.export_path}"
+            )
         else:
             self.done.emit(False, stderr or f"Failed to export '{self.name}'.")
 
 
 class ImportDistroWorker(QThread):
     """Imports a WSL distribution from a .tar file via `wsl --import`."""
+
     done = pyqtSignal(bool, str)
 
     def __init__(self, name: str, install_dir: str, tar_path: str, parent=None):
@@ -280,8 +310,9 @@ class ImportDistroWorker(QThread):
 
     def run(self):
         import os
+
         os.makedirs(self.install_dir, exist_ok=True)
-        rc, stdout, stderr = _run(
+        rc, _stdout, stderr = _run(
             ["wsl.exe", "--import", self.name, self.install_dir, self.tar_path],
             timeout=600,
         )
@@ -289,5 +320,3 @@ class ImportDistroWorker(QThread):
             self.done.emit(True, f"'{self.name}' imported successfully.")
         else:
             self.done.emit(False, stderr or f"Failed to import '{self.name}'.")
-
-

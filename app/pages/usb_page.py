@@ -1,40 +1,71 @@
+from datetime import datetime
+
 from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout,
-    QHeaderView, QAbstractItemView,
+    QAbstractItemView,
+    QHBoxLayout,
+    QHeaderView,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 from qfluentwidgets import (
-    ScrollArea, TitleLabel, BodyLabel, CaptionLabel,
-    PrimaryPushButton, PushButton, ToolButton,
-    TableWidget, ComboBox, CheckBox,
-    InfoBar, InfoBarPosition, IndeterminateProgressBar,
-    FluentIcon, CardWidget,
+    BodyLabel,
+    CaptionLabel,
+    CardWidget,
+    CheckBox,
+    ComboBox,
+    FluentIcon,
+    IndeterminateProgressBar,
+    InfoBar,
+    InfoBarPosition,
+    PrimaryPushButton,
+    PushButton,
+    ScrollArea,
+    TableWidget,
+    TitleLabel,
+    ToolButton,
 )
 
+from app.models.usb_device import UsbDevice
+from app.services.device_watcher import DeviceWatcher
+from app.utils.human_time import relative_time
+from app.utils.settings import settings_store
 from app.workers.usb_worker import (
-    ListUsbWorker, BindUsbWorker, AttachUsbWorker, DetachUsbWorker, UnbindUsbWorker,
-    AutoAttachWorker,
+    AttachUsbWorker,
+    BindUsbWorker,
+    DetachUsbWorker,
+    UnbindUsbWorker,
 )
 from app.workers.wsl_worker import ListInstalledWorker
-from app.models.usb_device import UsbDevice
 
 
 class UsbPage(ScrollArea):
     """Page for USB device sharing with WSL distributions."""
 
-    def __init__(self, parent=None):
+    def __init__(self, auto_attach_manager, watcher: DeviceWatcher, parent=None):
         super().__init__(parent)
         self.setObjectName("UsbPage")
+        self._manager = auto_attach_manager
+        self._watcher = watcher
         self._workers = []
         self._devices: dict[str, UsbDevice] = {}  # busid -> UsbDevice
         self._distros = []
-        self._auto_attach_workers: dict[str, AutoAttachWorker] = {}
-        self._last_selected_busid: str | None = None  # remember selection across refreshes
+        self._last_selected_busid: str | None = (
+            None  # remember selection across refreshes
+        )
 
-        # Periodic poll timer — keeps the table in sync while auto-attach is active
-        self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(3000)
-        self._poll_timer.timeout.connect(self._poll_refresh)
+        # The DeviceWatcher owns the only usbipd polling loop; the table is a
+        # pure view of its snapshots (same data the tray and reconciler use).
+        watcher.devicesUpdated.connect(self._on_usb_loaded)
+        watcher.error.connect(self._on_usb_error)
+
+        # Keep the table/button state in sync with manager-driven changes
+        # (tray actions, startup restoration, worker exits).
+        self._manager.started.connect(self._on_auto_attach_started)
+        self._manager.stopped.connect(self._on_auto_attach_stopped)
+        self._manager.error.connect(self._on_auto_attach_error)
 
         self._content = QWidget()
         self._content.setObjectName("usbContent")
@@ -92,16 +123,31 @@ class UsbPage(ScrollArea):
             "Allow auto-attach for devices not currently plugged in"
         )
         sel_layout.addWidget(self._unplugged_check)
+
+        self._keep_alive_check = CheckBox("Keep after restart")
+        self._keep_alive_check.setToolTip(
+            "Keep this auto-attach session alive over app restarts and Windows\n"
+            "logoffs. Enable 'Start at login' in the tray menu to restore it\n"
+            "automatically after rebooting."
+        )
+        self._keep_alive_check.toggled.connect(self._on_keep_alive_toggled)
+        sel_layout.addWidget(self._keep_alive_check)
         sel_layout.addStretch()
         self._layout.addWidget(sel_card)
 
         # Table
         self._table = TableWidget()
-        self._table.setColumnCount(4)
-        self._table.setHorizontalHeaderLabels(["Bus ID", "Device", "State", "Actions"])
-        self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self._table.setColumnCount(5)
+        self._table.setHorizontalHeaderLabels(
+            ["Bus ID", "Device", "State", "Last connected", "Actions"]
+        )
+        self._table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeMode.Stretch
+        )
+        for col in (2, 3, 4):
+            self._table.horizontalHeader().setSectionResizeMode(
+                col, QHeaderView.ResizeMode.ResizeToContents
+            )
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -118,7 +164,9 @@ class UsbPage(ScrollArea):
         action_bar.addWidget(self._bind_btn)
 
         self._attach_btn = PushButton(FluentIcon.SHARE, "Attach to WSL")
-        self._attach_btn.setToolTip("Attach the bound device to the selected WSL distribution")
+        self._attach_btn.setToolTip(
+            "Attach the bound device to the selected WSL distribution"
+        )
         self._attach_btn.clicked.connect(self._attach_selected)
         action_bar.addWidget(self._attach_btn)
 
@@ -144,34 +192,17 @@ class UsbPage(ScrollArea):
         self._layout.addLayout(action_bar)
 
     def refresh(self):
-        self._progress.setVisible(True)
-        # Load USB devices
-        usb_w = ListUsbWorker(self)
-        usb_w.result.connect(self._on_usb_loaded)
-        usb_w.error.connect(self._on_usb_error)
-        self._workers.append(usb_w)
-        usb_w.start()
+        """Redraw from the latest watcher snapshot and ask for a fresh one."""
+        self._on_usb_loaded(self._watcher.devices())
+        self._watcher.poll_now()
 
         # Load WSL distros for combo
+        self._progress.setVisible(True)
         wsl_w = ListInstalledWorker(self)
         wsl_w.result.connect(self._on_distros_loaded)
         wsl_w.finished.connect(lambda: self._progress.setVisible(False))
         self._workers.append(wsl_w)
         wsl_w.start()
-
-    def _poll_refresh(self):
-        """Lightweight refresh — only re-queries the USB device list."""
-        usb_w = ListUsbWorker(self)
-        usb_w.result.connect(self._on_usb_loaded)
-        self._workers.append(usb_w)
-        usb_w.start()
-
-    def _update_poll_timer(self):
-        """Start or stop the poll timer based on active auto-attach workers."""
-        if self._auto_attach_workers and not self._poll_timer.isActive():
-            self._poll_timer.start()
-        elif not self._auto_attach_workers and self._poll_timer.isActive():
-            self._poll_timer.stop()
 
     def _on_distros_loaded(self, distros):
         self._distros = distros
@@ -182,19 +213,18 @@ class UsbPage(ScrollArea):
 
     def _on_usb_loaded(self, devices):
         self._devices = {dev.busid: dev for dev in devices}
+        recent_seen = {d.key: d.last_seen for d in settings_store.data.recent_devices}
         self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
         for row, dev in enumerate(devices):
             self._table.insertRow(row)
-            from PyQt6.QtWidgets import QTableWidgetItem
             self._table.setItem(row, 0, QTableWidgetItem(dev.busid))
             self._table.setItem(row, 1, QTableWidgetItem(dev.description))
             state_item = QTableWidgetItem(dev.state)
             # Colour-code state
-            from PyQt6.QtGui import QColor
             state_lower = dev.state.lower()
             display_state = dev.state
-            if dev.busid in self._auto_attach_workers:
+            if self._manager.is_active(dev.key):
                 if "attached" in state_lower:
                     display_state += " (auto)"
                 else:
@@ -207,8 +237,23 @@ class UsbPage(ScrollArea):
             elif "shared" in state_lower or "bound" in state_lower:
                 state_item.setForeground(QColor("#0078D4"))
             self._table.setItem(row, 2, state_item)
+            # When this device was last plugged in — identifies a freshly
+            # attached device among several with the same name.
+            seen = recent_seen.get(dev.key) or recent_seen.get(dev.busid, "")
+            when_item = QTableWidgetItem(relative_time(seen))
+            when_item.setData(Qt.ItemDataRole.UserRole, seen)
+            if seen:
+                try:
+                    fresh = (
+                        datetime.now() - datetime.fromisoformat(seen)
+                    ).total_seconds() < 120
+                except ValueError:
+                    fresh = False
+                if fresh:
+                    when_item.setForeground(QColor("#B8860B"))
+            self._table.setItem(row, 3, when_item)
             # Empty actions column (handled via toolbar)
-            self._table.setItem(row, 3, QTableWidgetItem(""))
+            self._table.setItem(row, 4, QTableWidgetItem(""))
         self._table.setSortingEnabled(True)
         self._table.resizeRowsToContents()
 
@@ -287,12 +332,14 @@ class UsbPage(ScrollArea):
         if not dev:
             return
         # Stop auto-attach first — otherwise it will immediately re-attach.
-        if dev.busid in self._auto_attach_workers:
-            self._stop_auto_attach(dev.busid)
+        if self._manager.is_active(dev.key):
+            self._manager.stop(dev.key)
         worker = DetachUsbWorker(dev.busid, parent=self)
         # After detach the device re-enumerates at USB level; delay the refresh
         # so usbipd has time to update its device list before we query it.
-        worker.done.connect(lambda ok, msg: self._on_action_done(ok, msg, refresh_delay_ms=3000))
+        worker.done.connect(
+            lambda ok, msg: self._on_action_done(ok, msg, refresh_delay_ms=3000)
+        )
         self._workers.append(worker)
         worker.start()
 
@@ -310,63 +357,58 @@ class UsbPage(ScrollArea):
         if not dev:
             return
         # Stop if already running
-        if dev.busid in self._auto_attach_workers:
-            self._stop_auto_attach(dev.busid)
+        if self._manager.is_active(dev.key):
+            self._manager.stop(dev.key)
             return
         # Start auto-attach
         distro = self._selected_distro()
         unplugged = self._unplugged_check.isChecked()
-        worker = AutoAttachWorker(
-            dev.busid, distro=distro, unplugged=unplugged, parent=self,
+        keep_alive = self._keep_alive_check.isChecked()
+        self._manager.start(
+            dev.key,
+            busid=dev.busid,
+            distro=distro,
+            unplugged=unplugged,
+            description=dev.description,
+            keep_alive=keep_alive,
         )
-        worker.started.connect(self._on_auto_attach_started)
-        worker.stopped.connect(self._on_auto_attach_stopped)
-        worker.error.connect(self._on_auto_attach_error)
-        self._auto_attach_workers[dev.busid] = worker
-        worker.start()
-
-    def _stop_auto_attach(self, busid: str):
-        worker = self._auto_attach_workers.pop(busid, None)
-        if worker:
-            worker.stop()
 
     def _on_auto_attach_started(self, busid: str):
         InfoBar.success(
             title="Auto-Attach",
-            content=f"Auto-attach started for device {busid}.",
+            content=f"Auto-attach started for device {settings_store.data.display(busid)}.",
             orient=Qt.Orientation.Horizontal,
             isClosable=True,
             position=InfoBarPosition.TOP,
-            duration=3000, parent=self,
+            duration=3000,
+            parent=self,
         )
-        QTimer.singleShot(1500, self.refresh)
-        self._update_poll_timer()
+        # Give the first attach attempt time to change the device state.
+        QTimer.singleShot(1500, self._watcher.poll_now)
 
     def _on_auto_attach_stopped(self, busid: str):
-        self._auto_attach_workers.pop(busid, None)
-        self._update_poll_timer()
+        self._watcher.poll_now()
         InfoBar.info(
             title="Auto-Attach",
-            content=f"Auto-attach stopped for device {busid}.",
+            content=f"Auto-attach stopped for device {settings_store.data.display(busid)}.",
             orient=Qt.Orientation.Horizontal,
             isClosable=True,
             position=InfoBarPosition.TOP,
-            duration=3000, parent=self,
+            duration=3000,
+            parent=self,
         )
-        self.refresh()
 
     def _on_auto_attach_error(self, busid: str, msg: str):
-        self._auto_attach_workers.pop(busid, None)
-        self._update_poll_timer()
         InfoBar.error(
             title="Auto-Attach Error",
             content=msg,
             orient=Qt.Orientation.Horizontal,
             isClosable=True,
             position=InfoBarPosition.TOP,
-            duration=6000, parent=self,
+            duration=6000,
+            parent=self,
         )
-        self.refresh()
+        self._watcher.poll_now()
 
     def _on_selection_changed(self):
         row = self._table.currentRow()
@@ -383,7 +425,7 @@ class UsbPage(ScrollArea):
             self._auto_attach_btn.setEnabled(False)
             return
         state_lower = dev.state.lower()
-        if dev.busid in self._auto_attach_workers:
+        if self._manager.is_active(dev.key):
             self._auto_attach_btn.setText("Stop Auto-Attach")
             self._auto_attach_btn.setEnabled(True)
         elif "not shared" in state_lower:
@@ -393,37 +435,66 @@ class UsbPage(ScrollArea):
             self._auto_attach_btn.setText("Auto-Attach")
             self._auto_attach_btn.setEnabled(True)
 
+        # Reflect the persisted keep-alive flag without firing the toggle slot
+        self._keep_alive_check.blockSignals(True)
+        self._keep_alive_check.setChecked(self._manager.is_keep_alive(dev.key))
+        self._keep_alive_check.blockSignals(False)
+
+    def _on_keep_alive_toggled(self, checked: bool):
+        """Apply a keep-alive change immediately for the selected device."""
+        rows = self._table.selectedItems()
+        if not rows:
+            return
+        item = self._table.item(self._table.currentRow(), 0)
+        if item is None:
+            return
+        busid = item.text()
+        dev = self._devices.get(busid)
+        key = dev.key if dev else busid
+        # Only act when the flag actually differs from the persisted state.
+        if self._manager.is_keep_alive(key) == checked:
+            return
+        self._manager.set_keep_alive(
+            key,
+            checked,
+            description=dev.description if dev else "",
+            busid=dev.busid if dev else "",
+        )
+        if self._manager.is_active(key):
+            what = "will now survive" if checked else "will no longer survive"
+            InfoBar.info(
+                title="Auto-Attach",
+                content=f"Auto-attach for {busid} {what} app restarts.",
+                orient=Qt.Orientation.Horizontal,
+                isClosable=True,
+                position=InfoBarPosition.TOP,
+                duration=3000,
+                parent=self,
+            )
+
     def _on_action_done(self, success: bool, msg: str, refresh_delay_ms: int = 0):
         if success:
             InfoBar.success(
-                title="Success", content=msg,
+                title="Success",
+                content=msg,
                 orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 position=InfoBarPosition.TOP,
-                duration=3000, parent=self,
+                duration=3000,
+                parent=self,
             )
         else:
             InfoBar.error(
-                title="Error", content=msg,
+                title="Error",
+                content=msg,
                 orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 position=InfoBarPosition.TOP,
-                duration=6000, parent=self,
+                duration=6000,
+                parent=self,
             )
+        poll = self._watcher.poll_now
         if refresh_delay_ms > 0:
-            QTimer.singleShot(refresh_delay_ms, self.refresh)
+            QTimer.singleShot(refresh_delay_ms, poll)
         else:
-            self.refresh()
-
-    def _cleanup_auto_attach(self):
-        for busid in list(self._auto_attach_workers):
-            self._stop_auto_attach(busid)
-
-    def closeEvent(self, a0):
-        self._cleanup_auto_attach()
-        super().closeEvent(a0)
-
-    def deleteLater(self):
-        self._cleanup_auto_attach()
-        super().deleteLater()
-
+            poll()

@@ -1,33 +1,59 @@
 import os
 
 from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QPixmap, QFont
+from PyQt6.QtGui import QFont, QPixmap
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QSizePolicy, QSpacerItem, QFileDialog, QGridLayout,
+    QFileDialog,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
     QPlainTextEdit,
+    QSizePolicy,
+    QSpacerItem,
+    QVBoxLayout,
+    QWidget,
 )
 from qfluentwidgets import (
-    ScrollArea, TitleLabel, SubtitleLabel, BodyLabel,
-    PrimaryPushButton, PushButton, ToolButton,
-    InfoBar, InfoBarPosition, IndeterminateProgressBar,
-    CardWidget, FluentIcon, CaptionLabel,
-    MessageBox, MessageBoxBase, SegmentedWidget, StrongBodyLabel,
+    BodyLabel,
+    CaptionLabel,
+    CardWidget,
+    FluentIcon,
+    IndeterminateProgressBar,
+    InfoBar,
+    InfoBarPosition,
+    MessageBox,
+    MessageBoxBase,
+    PrimaryPushButton,
+    PushButton,
+    ScrollArea,
+    SegmentedWidget,
+    StrongBodyLabel,
+    SubtitleLabel,
+    TitleLabel,
+    ToolButton,
 )
 
 from app.models.container import EntityFilter
-from app.workers.wsl_worker import (
-    ListInstalledWorker, SetDefaultWorker,
-    TerminateDistroWorker, UnregisterDistroWorker,
-    LaunchDistroTerminalWorker, ExportDistroWorker,
-)
-from app.workers.container_worker import (
-    ListContainersWorker, StartContainerWorker, StopContainerWorker,
-    RemoveContainerWorker, InspectContainerWorker, GetContainerLogsWorker,
-    GetContainerStatsWorker, ListSessionsWorker,
-)
-from app.utils.wslc_locator import is_container_support_available
 from app.utils.elevation import is_admin
+from app.utils.wslc_locator import is_container_support_available
+from app.workers.container_worker import (
+    GetContainerLogsWorker,
+    GetContainerStatsWorker,
+    InspectContainerWorker,
+    ListContainersWorker,
+    ListSessionsWorker,
+    RemoveContainerWorker,
+    StartContainerWorker,
+    StopContainerWorker,
+)
+from app.workers.wsl_worker import (
+    ExportDistroWorker,
+    LaunchDistroTerminalWorker,
+    ListInstalledWorker,
+    SetDefaultWorker,
+    TerminateDistroWorker,
+    UnregisterDistroWorker,
+)
 
 
 class DistroCard(CardWidget):
@@ -83,7 +109,9 @@ class DistroCard(CardWidget):
         info.addLayout(name_row)
 
         # Status line
-        status_color = "#107C10" if self.distro.state.lower() == "running" else "#797775"
+        status_color = (
+            "#107C10" if self.distro.state.lower() == "running" else "#797775"
+        )
         status_label = CaptionLabel(f"● {self.distro.state}   WSL{self.distro.version}")
         status_label.setStyleSheet(f"color: {status_color};")
         info.addWidget(status_label)
@@ -104,31 +132,43 @@ class DistroCard(CardWidget):
         if not self.distro.is_default:
             set_default_btn = PrimaryPushButton("Set as Default")
             set_default_btn.setFixedWidth(BTN_W)
-            set_default_btn.clicked.connect(lambda: self.parent_page.set_default(self.distro.name))
+            set_default_btn.clicked.connect(
+                lambda: self.parent_page.set_default(self.distro.name)
+            )
             btn_grid.addWidget(set_default_btn, 0, 0)
         else:
             btn_grid.addItem(
-                QSpacerItem(BTN_W, 0, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum), 0, 0
+                QSpacerItem(
+                    BTN_W, 0, QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Minimum
+                ),
+                0,
+                0,
             )
 
         # row 0, col 1 — Export
         export_btn = PushButton(FluentIcon.SHARE, "Export")
         export_btn.setFixedWidth(BTN_W)
         export_btn.setToolTip("Export this distribution to a .tar file")
-        export_btn.clicked.connect(lambda: self.parent_page.export_distro(self.distro.name))
+        export_btn.clicked.connect(
+            lambda: self.parent_page.export_distro(self.distro.name)
+        )
         btn_grid.addWidget(export_btn, 0, 1)
 
         # row 1, col 0 — Stop (only when running)
         if self.distro.state.lower() == "running":
             stop_btn = PushButton("Stop")
             stop_btn.setFixedWidth(BTN_W)
-            stop_btn.clicked.connect(lambda: self.parent_page.terminate_distro(self.distro.name))
+            stop_btn.clicked.connect(
+                lambda: self.parent_page.terminate_distro(self.distro.name)
+            )
             btn_grid.addWidget(stop_btn, 1, 0)
 
         # row 1, col 1 — Remove
         remove_btn = PushButton("Remove")
         remove_btn.setFixedWidth(BTN_W)
-        remove_btn.clicked.connect(lambda: self.parent_page.remove_distro(self.distro.name))
+        remove_btn.clicked.connect(
+            lambda: self.parent_page.remove_distro(self.distro.name)
+        )
         btn_grid.addWidget(remove_btn, 1, 1)
 
         root.addLayout(btn_grid)
@@ -174,9 +214,7 @@ class ContainerCard(CardWidget):
     # ------------------------------------------------------------------
     def _build_ui(self):
         # Distinguish containers from distros with a subtle accent border.
-        self.setStyleSheet(
-            "ContainerCard { border-left: 3px solid #0078D4; }"
-        )
+        self.setStyleSheet("ContainerCard { border-left: 3px solid #0078D4; }")
         self._root = QVBoxLayout(self)
         self._root.setContentsMargins(16, 12, 16, 12)
         self._root.setSpacing(10)
@@ -443,17 +481,17 @@ class DistrosPage(ScrollArea):
         self._container_support = is_container_support_available()
         self._distros_loaded = False
         self._containers_loaded = not self._container_support
-        self._expanded_container_id = None   # preserved across refreshes
-        self._session_hint_shown = False     # avoid repeating the hint each refresh
+        self._expanded_container_id = None  # preserved across refreshes
+        self._session_hint_shown = False  # avoid repeating the hint each refresh
 
         # Timer used to poll the distro list after a terminal launch so the
         # status badge updates once the distribution transitions to "Running".
         self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(2000)          # check every 2 s
+        self._poll_timer.setInterval(2000)  # check every 2 s
         self._poll_timer.timeout.connect(self.refresh)
         self._poll_count = 0
-        self._POLL_MAX = 15                         # stop after 30 s
-        self._last_distro_count = 0                 # used to detect newly installed distros
+        self._POLL_MAX = 15  # stop after 30 s
+        self._last_distro_count = 0  # used to detect newly installed distros
 
         # Scroll content
         self._content = QWidget()
@@ -486,7 +524,9 @@ class DistrosPage(ScrollArea):
         self._filter_bar = SegmentedWidget(self)
         self._filter_bar.addItem(EntityFilter.ALL.value, "All", None)
         self._filter_bar.addItem(EntityFilter.DISTROS_ONLY.value, "Distros Only", None)
-        self._filter_bar.addItem(EntityFilter.CONTAINERS_ONLY.value, "Containers Only", None)
+        self._filter_bar.addItem(
+            EntityFilter.CONTAINERS_ONLY.value, "Containers Only", None
+        )
         self._filter_bar.setCurrentItem(EntityFilter.ALL.value)
         self._filter_bar.currentItemChanged.connect(self._on_filter_changed)
         filter_row = QHBoxLayout()
@@ -559,7 +599,7 @@ class DistrosPage(ScrollArea):
         when it completes.  Poll every 5 s for up to 10 minutes (120 attempts).
         """
         self._poll_count = 0
-        self._POLL_MAX = 120   # 10 min @ 5 s interval
+        self._POLL_MAX = 120  # 10 min @ 5 s interval
         self._poll_timer.setInterval(5000)
         self._poll_timer.start()
 
@@ -646,9 +686,9 @@ class DistrosPage(ScrollArea):
         self._clear_cards()
 
         show_distros = self._filter in (EntityFilter.ALL, EntityFilter.DISTROS_ONLY)
-        show_containers = (
-            self._container_support
-            and self._filter in (EntityFilter.ALL, EntityFilter.CONTAINERS_ONLY)
+        show_containers = self._container_support and self._filter in (
+            EntityFilter.ALL,
+            EntityFilter.CONTAINERS_ONLY,
         )
 
         rendered = False
@@ -788,21 +828,15 @@ class DistrosPage(ScrollArea):
 
     def load_container_details(self, container, card):
         worker = InspectContainerWorker(container.id, self)
-        worker.result.connect(
-            lambda cid, detail, c=card: c.populate_details(detail)
-        )
-        worker.error.connect(
-            lambda cid, msg, c=card: c.show_details_error(msg)
-        )
+        worker.result.connect(lambda cid, detail, c=card: c.populate_details(detail))
+        worker.error.connect(lambda cid, msg, c=card: c.show_details_error(msg))
         self._workers.append(worker)
         worker.start()
 
         # Best-effort live resource snapshot for running containers.
         if container.is_running:
             sworker = GetContainerStatsWorker(container.id, self)
-            sworker.result.connect(
-                lambda cid, stats, c=card: c.populate_stats(stats)
-            )
+            sworker.result.connect(lambda cid, stats, c=card: c.populate_stats(stats))
             self._workers.append(sworker)
             sworker.start()
 
@@ -822,40 +856,47 @@ class DistrosPage(ScrollArea):
     def _on_launch_done(self, success: bool, msg: str):
         if success:
             InfoBar.success(
-                title="Success", content=msg,
+                title="Success",
+                content=msg,
                 orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 position=InfoBarPosition.TOP,
-                duration=3000, parent=self,
+                duration=3000,
+                parent=self,
             )
             # Start polling so the status badge updates once the distro is running
             self._poll_count = 0
             self._poll_timer.start()
         else:
             InfoBar.error(
-                title="Error", content=msg,
+                title="Error",
+                content=msg,
                 orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 position=InfoBarPosition.TOP,
-                duration=5000, parent=self,
+                duration=5000,
+                parent=self,
             )
 
     def _on_action_done(self, success: bool, msg: str):
         if success:
             InfoBar.success(
-                title="Success", content=msg,
+                title="Success",
+                content=msg,
                 orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 position=InfoBarPosition.TOP,
-                duration=3000, parent=self,
+                duration=3000,
+                parent=self,
             )
         else:
             InfoBar.error(
-                title="Error", content=msg,
+                title="Error",
+                content=msg,
                 orient=Qt.Orientation.Horizontal,
                 isClosable=True,
                 position=InfoBarPosition.TOP,
-                duration=5000, parent=self,
+                duration=5000,
+                parent=self,
             )
         self.refresh()
-

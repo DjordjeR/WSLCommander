@@ -1,6 +1,5 @@
 import json
 import subprocess
-from typing import List
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -19,7 +18,7 @@ def _decode(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace").strip()
 
 
-def _run_wslc(args: List[str], timeout: int = 30) -> tuple[int, str, str]:
+def _run_wslc(args: list[str], timeout: int = 30) -> tuple[int, str, str]:
     """Run a `wslc` command and return (returncode, stdout, stderr).
 
     Resolves the absolute path to ``wslc.exe`` so the call works even when the
@@ -33,6 +32,7 @@ def _run_wslc(args: List[str], timeout: int = 30) -> tuple[int, str, str]:
             [wslc, *args],
             capture_output=True,
             timeout=timeout,
+            check=False,  # return code is inspected by callers
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
         return result.returncode, _decode(result.stdout), _decode(result.stderr)
@@ -44,7 +44,8 @@ def _run_wslc(args: List[str], timeout: int = 30) -> tuple[int, str, str]:
 
 class ListContainersWorker(QThread):
     """Lists all containers via `wslc list --all --format json`."""
-    result = pyqtSignal(list)   # list[Container]
+
+    result = pyqtSignal(list)  # list[Container]
     error = pyqtSignal(str)
 
     def run(self):
@@ -53,7 +54,7 @@ class ListContainersWorker(QThread):
             self.error.emit(stderr or "Failed to list containers.")
             return
 
-        containers: List[Container] = []
+        containers: list[Container] = []
         stdout = stdout.strip()
         if stdout:
             try:
@@ -61,8 +62,8 @@ class ListContainersWorker(QThread):
             except json.JSONDecodeError:
                 # Some CLIs emit newline-delimited JSON objects.
                 data = []
-                for line in stdout.splitlines():
-                    line = line.strip()
+                for raw_line in stdout.splitlines():
+                    line = raw_line.strip()
                     if not line:
                         continue
                     try:
@@ -88,14 +89,15 @@ class ListSessionsWorker(QThread):
     is treated as elevated when its display name contains "admin" (wslc names
     sessions e.g. ``wslc-cli-<user>`` vs ``wslc-cli-admin-<user>``).
     """
+
     result = pyqtSignal(list)
 
     def run(self):
-        rc, stdout, stderr = _run_wslc(["system", "session", "list"])
+        rc, stdout, _stderr = _run_wslc(["system", "session", "list"])
         sessions = []
         if rc == 0 and stdout:
-            for line in stdout.splitlines():
-                line = line.strip()
+            for raw_line in stdout.splitlines():
+                line = raw_line.strip()
                 if not line:
                     continue
                 # Skip header and informational lines.
@@ -105,17 +107,20 @@ class ListSessionsWorker(QThread):
                 if len(parts) < 3 or not parts[0].isdigit():
                     continue
                 display_name = parts[2].strip()
-                sessions.append({
-                    "id": parts[0],
-                    "creator_pid": parts[1],
-                    "display_name": display_name,
-                    "is_elevated": "admin" in display_name.lower(),
-                })
+                sessions.append(
+                    {
+                        "id": parts[0],
+                        "creator_pid": parts[1],
+                        "display_name": display_name,
+                        "is_elevated": "admin" in display_name.lower(),
+                    }
+                )
         self.result.emit(sessions)
 
 
 class StartContainerWorker(QThread):
     """Starts a container via `wslc start <id>`."""
+
     done = pyqtSignal(bool, str)
 
     def __init__(self, container_id: str, name: str = "", parent=None):
@@ -124,7 +129,7 @@ class StartContainerWorker(QThread):
         self.name = name or container_id
 
     def run(self):
-        rc, stdout, stderr = _run_wslc(["start", self.container_id])
+        rc, _stdout, stderr = _run_wslc(["start", self.container_id])
         if rc == 0:
             self.done.emit(True, f"'{self.name}' started.")
         else:
@@ -133,6 +138,7 @@ class StartContainerWorker(QThread):
 
 class StopContainerWorker(QThread):
     """Stops a container via `wslc stop <id>`."""
+
     done = pyqtSignal(bool, str)
 
     def __init__(self, container_id: str, name: str = "", parent=None):
@@ -141,7 +147,7 @@ class StopContainerWorker(QThread):
         self.name = name or container_id
 
     def run(self):
-        rc, stdout, stderr = _run_wslc(["stop", self.container_id], timeout=60)
+        rc, _stdout, stderr = _run_wslc(["stop", self.container_id], timeout=60)
         if rc == 0:
             self.done.emit(True, f"'{self.name}' stopped.")
         else:
@@ -150,9 +156,12 @@ class StopContainerWorker(QThread):
 
 class RemoveContainerWorker(QThread):
     """Removes a container via `wslc remove [-f] <id>`."""
+
     done = pyqtSignal(bool, str)
 
-    def __init__(self, container_id: str, name: str = "", force: bool = False, parent=None):
+    def __init__(
+        self, container_id: str, name: str = "", force: bool = False, parent=None
+    ):
         super().__init__(parent)
         self.container_id = container_id
         self.name = name or container_id
@@ -163,7 +172,7 @@ class RemoveContainerWorker(QThread):
         if self.force:
             args.append("-f")
         args.append(self.container_id)
-        rc, stdout, stderr = _run_wslc(args, timeout=60)
+        rc, _stdout, stderr = _run_wslc(args, timeout=60)
         if rc == 0:
             self.done.emit(True, f"'{self.name}' removed.")
         else:
@@ -172,8 +181,9 @@ class RemoveContainerWorker(QThread):
 
 class InspectContainerWorker(QThread):
     """Fetches detailed info for a container via `wslc inspect <id>`."""
-    result = pyqtSignal(str, dict)   # container_id, parsed detail dict
-    error = pyqtSignal(str, str)     # container_id, message
+
+    result = pyqtSignal(str, dict)  # container_id, parsed detail dict
+    error = pyqtSignal(str, str)  # container_id, message
 
     def __init__(self, container_id: str, parent=None):
         super().__init__(parent)
@@ -198,8 +208,9 @@ class InspectContainerWorker(QThread):
 
 class GetContainerLogsWorker(QThread):
     """Fetches container logs via `wslc logs -n <tail> <id>`."""
-    result = pyqtSignal(str, str)    # container_id, logs text
-    error = pyqtSignal(str, str)     # container_id, message
+
+    result = pyqtSignal(str, str)  # container_id, logs text
+    error = pyqtSignal(str, str)  # container_id, message
 
     def __init__(self, container_id: str, tail: int = 500, parent=None):
         super().__init__(parent)
@@ -226,14 +237,15 @@ class GetContainerStatsWorker(QThread):
     Best-effort: emits an empty dict on any failure so callers can silently
     skip the resource line.
     """
-    result = pyqtSignal(str, dict)   # container_id, stats dict
+
+    result = pyqtSignal(str, dict)  # container_id, stats dict
 
     def __init__(self, container_id: str, parent=None):
         super().__init__(parent)
         self.container_id = container_id
 
     def run(self):
-        rc, stdout, stderr = _run_wslc(
+        rc, stdout, _stderr = _run_wslc(
             ["stats", "--format", "json", self.container_id], timeout=20
         )
         stats: dict = {}

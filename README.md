@@ -15,6 +15,13 @@ A modern Windows desktop application for managing your **Windows Subsystem for L
 - Install new distributions from the official online catalogue
 - Import a distribution from a `.tar` archive with a custom name and install location
 - Share USB devices with WSL, including bind, unbind, attach, detach, and auto-attach workflows
+- Keep auto-attach sessions alive over app restarts and reboots, with a **Keep after restart** option
+- Auto-attach as a desired state: devices on the list are (re-)attached automatically whenever
+  they appear, even if they were unplugged or unavailable when the entry was created
+- System tray icon with a live auto-attach badge, quick start/stop controls, a recent-devices
+  quick-attach submenu, **Close to tray**, and **Start at login**
+- Settings page to pick which notifications you receive (started / stopped / errors /
+  attached / detached)
 - Browse USB devices in a sortable table with color-coded device states
 - Manage **WSL containers** alongside distributions on a unified page, with an All / Distros / Containers filter, expandable container details, logs, and start/stop/remove actions *(requires WSL 2.9.3+)*
 - Use a modern Fluent Design UI with automatic light/dark theme support
@@ -84,6 +91,48 @@ Or download the installer from the [usbipd-win releases page](https://github.com
 > **Note:** Without `usbipd-win`, the USB page will still open but no devices will be listed and attach/detach actions will not be available.
 
 > **Note:** Binding and unbinding USB devices may trigger a Windows UAC prompt if WSL Commander is not already running with administrator privileges.
+
+---
+
+## Auto-Attach, Tray & Startup
+
+WSL Commander can keep USB devices auto-attached to WSL in the background:
+
+- **Keep after restart** (USB page): marks an auto-attach session as persistent. Persistent
+  sessions survive app restarts and Windows logoffs, and are restored automatically when
+  WSL Commander starts. Non-persistent sessions are cleaned up automatically when the app
+  exits (even after a crash, via a Windows job object).
+- **Auto-attach is a desired state**: once a device is on the auto-attach list, WSL Commander
+  keeps trying to honour it. If the device is unplugged, not shared yet, or an attach attempt
+  fails, the entry stays and the app automatically re-attaches as soon as the device shows up
+  again (checked every few seconds, with a short backoff so a persistently failing device
+  never rapid-fires). Only removing it from the list (or toggling auto-attach off) stops it.
+- **System tray icon**: while any auto-attach session is active, the tray icon shows a green
+  badge with the device count. Right-click the icon to stop a running session, restart a saved
+  one, or open the app. Auto-attach events also arrive as native Windows notifications.
+- **Recent devices submenu**: the tray menu lists the most recently *plugged-in* USB devices —
+  any device, not just shared ones — each with a live indicator (● attached, ○ not attached)
+  and the time it was last connected ("just now", "5 min ago", …), so you can tell which of
+  several identically-named "USB Input Device" entries is the one you just plugged in. From
+  there you can start **Auto attach** or **Keep after restart** for a device in one click, or
+  stop it if it is already running. The USB page table shows the same
+  **Last connected** column (a freshly plugged device is highlighted).
+- **Attach / detach notifications**: a lightweight background watcher polls `usbipd list` and
+  raises a Windows notification whenever a device becomes attached to (or detached from) WSL —
+  including devices you attach by hand or that auto-attach re-connects on their own.
+- **Settings page**: choose which notifications you want (auto-attach started / stopped,
+  errors, device attached / detached), plus **Minimize to tray** and **Start at login**
+  toggles.
+- **Close to tray** (off by default): when enabled, closing the window minimizes to the
+  notification area. Use the tray menu's **Quit** to exit.
+- **Start at login**: the tray menu toggle registers WSL Commander in the per-user Windows
+  Run key (`HKCU\...\CurrentVersion\Run`) and launches it minimized (`--tray`), so persisted
+  auto-attach sessions come back after a reboot without any manual step.
+- **Single instance**: launching the app again while it runs in the tray simply raises the
+  existing window.
+
+Settings (persisted auto-attach sessions, tray, startup and notification preferences) are
+stored in `%APPDATA%\WSLCommander\settings.json`.
 
 ---
 
@@ -157,7 +206,8 @@ WSLCommander/
 │   ├── main_window.py        # Main application window
 │   ├── models/               # Data models (Distro, Container, UsbDevice)
 │   ├── pages/                # UI pages (Distributions, Install, USB)
-│   ├── utils/                # Helpers (logo resolution, elevation, wslc locator)
+│   ├── services/             # App-level services (auto-attach manager, tray icon)
+│   ├── utils/                # Helpers (settings, startup, single instance, job object, elevation, wslc locator)
 │   └── workers/              # Background QThread workers (WSL, containers, USB)
 ├── assets/
 │   ├── distros/              # Distribution logo images
